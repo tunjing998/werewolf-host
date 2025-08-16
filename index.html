@@ -88,6 +88,7 @@ const state = {
   currentStepIndex: 0,
   round: 1,
   votes: {},
+  abstain: 0,
   voteHistory: [],
   timer: { seconds: 120, remaining: 120, running: false, id: null },
   logs: []
@@ -274,6 +275,7 @@ function renderVoteHistory(){
     const li = document.createElement('li');
     const mappings = Object.entries(r.votes).map(([v,t])=>v+'->'+t).join(' ');
     li.textContent = `第${r.round}天${r.phaseKey==='day'?'白天':'夜晚'}: ${r.result.join(',')||'无'} (${mappings})`;
+
     ul.appendChild(li);
   });
 }
