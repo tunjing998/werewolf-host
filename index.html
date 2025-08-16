@@ -192,6 +192,11 @@ function renderPhase(){
 }
 
 function nextStep(){
+  if(!state.gameStarted){
+    state.gameStarted = true;
+    disableInputs();
+    saveState();
+  }
   const phase = state.phases[state.currentPhaseIndex];
   if(state.currentStepIndex < phase.steps.length -1){
     state.currentStepIndex++;
@@ -471,6 +476,18 @@ document.getElementById('import-file').addEventListener('change',e=>{
       saveState();
     });
   });
+
+const playerCountInput = document.getElementById('player-count');
+playerCountInput.dataset.prev = playerCountInput.value;
+playerCountInput.addEventListener('change',()=>{
+  const total = Array.from(document.querySelectorAll('#roles input')).reduce((s,i)=>s+parseInt(i.value,10),0);
+  if(total > parseInt(playerCountInput.value,10)){
+    alert('玩家数不能小于职业总数');
+    playerCountInput.value = playerCountInput.dataset.prev;
+    return;
+  }
+  playerCountInput.dataset.prev = playerCountInput.value;
+});
 
 const playerCountInput = document.getElementById('player-count');
 playerCountInput.dataset.prev = playerCountInput.value;
