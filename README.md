@@ -12,6 +12,7 @@
   - 修改玩家昵称
   - 标记玩家存活/死亡
   - 手动输入各职业数量（如：狼人、村民、预言家、女巫、猎人、守卫、白痴）
+  - 为每位玩家记录职业
 
 - **阶段与步骤**
   - 夜晚：狼人行动 → 预言家验人 → 女巫用药 → 守卫守人
@@ -20,7 +21,7 @@
   - 白天结束后自动进入下一天（Round +1）
 
 - **投票面板**
-  - 记录玩家投票
+  - 记录每位玩家的投票对象
   - 支持弃票
   - 一键结算（显示最高票玩家，支持并列）
   - 投票历史保存
@@ -67,10 +68,10 @@ index.html // 含 HTML、CSS、JS
    - 点击 “下一步” 或 “上一步” 控制流程  
    - 完成白天后自动进入下一天夜晚
 
-3. **投票面板**  
-   - 给玩家投票，或增加弃票  
-   - 点击 “结算投票” 生成投票结果并写入历史  
-   - 点击 “重置投票” 清空当轮统计
+3. **投票面板**
+   - 选择投票者，为其记录投票对象或弃票
+   - 点击 “结算投票” 生成投票结果并写入历史
+   - 点击 “重置投票” 清空当轮记录
 
 4. **计时器**  
    - 输入秒数，点击开始  
@@ -172,9 +173,8 @@ Player = {
 VoteRecord = {
   phaseKey: "day",
   round: 1,
-  votes: { "P1": 3, "P2": 2 },
-  abstain: 1,
-  result: ["P1"],
+  votes: { "P1": "P3", "P2": "abstain" },
+  result: ["P3"],
   time: "2025-08-17 20:00:00"
 }
 
@@ -186,8 +186,7 @@ State（整体状态）:
   currentPhaseIndex: number;
   currentStepIndex: number;
   round: number;
-  votes: { [playerId]: number };
-  abstain: number;
+  votes: { [voterId]: string };
   voteHistory: VoteRecord[];
   timer: { seconds: number; running: boolean };
   logs: { time: string; text: string }[];

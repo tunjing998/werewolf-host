@@ -43,6 +43,9 @@
 
 <section id="vote">
   <h2>投票</h2>
+  <div>
+    <label>投票者 <select id="vote-voter"></select></label>
+  </div>
   <div id="vote-buttons"></div>
   <button id="vote-abstain">弃票</button>
   <button id="vote-result">结算投票</button>
@@ -116,7 +119,11 @@ function renderPlayers(){
     alive.type = 'checkbox';
     alive.checked = p.alive;
     alive.onchange = () => { p.alive = alive.checked; renderPlayers(); renderVoteButtons(); saveState(); };
-    div.append(p.id + ': ', nameInput, ' 存活 ', alive);
+    const roleInput = document.createElement('input');
+    roleInput.placeholder = '职业';
+    roleInput.value = p.role || '';
+    roleInput.onchange = () => { p.role = roleInput.value; saveState(); };
+    div.append(p.id + ': ', nameInput, ' 存活 ', alive, ' 职业 ', roleInput);
     container.appendChild(div);
   });
 }
@@ -179,49 +186,72 @@ function prevStep(){
 
 function renderVoteButtons(){
   const container = document.getElementById('vote-buttons');
+  const voterSelect = document.getElementById('vote-voter');
   container.innerHTML = '';
-  state.players.forEach(p => {
-    if(p.alive){
-      const btn = document.createElement('button');
-      btn.textContent = p.id;
-      btn.onclick = () => { state.votes[p.id] = (state.votes[p.id]||0)+1; updateVoteStatus(); saveState(); };
-      container.appendChild(btn);
-    }
+  voterSelect.innerHTML = '';
+  const alivePlayers = state.players.filter(p=>p.alive);
+  alivePlayers.forEach(p=>{
+    const option = document.createElement('option');
+    option.value = p.id;
+    option.textContent = p.id;
+    voterSelect.appendChild(option);
+  });
+  alivePlayers.forEach(p=>{
+    const btn = document.createElement('button');
+    btn.textContent = p.id;
+    btn.onclick = ()=>{
+      const voter = voterSelect.value;
+      if(voter){
+        state.votes[voter] = p.id;
+        updateVoteStatus();
+        saveState();
+      }
+    };
+    container.appendChild(btn);
   });
   updateVoteStatus();
 }
 
 function updateVoteStatus(){
   const lines = [];
-  for(const id in state.votes){
-    lines.push(id+':'+state.votes[id]);
+  for(const voter in state.votes){
+    const target = state.votes[voter];
+    lines.push(voter + '->' + (target==='abstain'?'弃票':target));
   }
-  lines.push('弃票:'+state.abstain);
   document.getElementById('vote-status').textContent = lines.join(' ');
 }
 
 function voteAbstain(){
-  state.abstain++;
-  updateVoteStatus();
-  saveState();
+  const voter = document.getElementById('vote-voter').value;
+  if(voter){
+    state.votes[voter] = 'abstain';
+    updateVoteStatus();
+    saveState();
+  }
 }
 
 function voteReset(){
   state.votes = {};
-  state.abstain = 0;
   updateVoteStatus();
   log('重置投票');
   saveState();
 }
 
 function voteResult(){
+  const tally = {};
+  for(const voter in state.votes){
+    const target = state.votes[voter];
+    if(target && target !== 'abstain'){
+      tally[target] = (tally[target]||0)+1;
+    }
+  }
   let max = 0;
   const result = [];
-  for(const id in state.votes){
-    const v = state.votes[id];
-    if(v>max){
-      max=v; result.length=0; result.push(id);
-    } else if(v===max){
+  for(const id in tally){
+    const count = tally[id];
+    if(count>max){
+      max = count; result.length=0; result.push(id);
+    } else if(count===max){
       result.push(id);
     }
   }
@@ -230,7 +260,6 @@ function voteResult(){
     phaseKey: state.phases[state.currentPhaseIndex].key,
     round: state.round,
     votes: {...state.votes},
-    abstain: state.abstain,
     result: result,
     time: new Date().toISOString()
   });
@@ -244,7 +273,9 @@ function renderVoteHistory(){
   ul.innerHTML='';
   state.voteHistory.forEach(r=>{
     const li = document.createElement('li');
-    li.textContent = `第${r.round}天${r.phaseKey==='day'?'白天':'夜晚'}: ${r.result.join(',')||'无'} (${JSON.stringify(r.votes)})`;
+    const mappings = Object.entries(r.votes).map(([v,t])=>v+'->'+t).join(' ');
+    li.textContent = `第${r.round}天${r.phaseKey==='day'?'白天':'夜晚'}: ${r.result.join(',')||'无'} (${mappings})`;
+
     ul.appendChild(li);
   });
 }
