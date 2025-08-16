@@ -31,6 +31,7 @@
     <label>守卫<input type="number" data-role="guard" min="0" value="1"></label>
     <label>白痴<input type="number" data-role="idiot" min="0" value="1"></label>
   </div>
+  <button id="start-game">开始游戏</button>
 </section>
 
 <section id="phase">
@@ -91,7 +92,18 @@ const state = {
   abstain: 0,
   voteHistory: [],
   timer: { seconds: 120, remaining: 120, running: false, id: null },
-  logs: []
+  logs: [],
+  gameStarted: false
+};
+
+const roleNames = {
+  wolf: '狼人',
+  villager: '村民',
+  seer: '预言家',
+  witch: '女巫',
+  hunter: '猎人',
+  guard: '守卫',
+  idiot: '白痴'
 };
 
 function saveState(){
@@ -114,22 +126,54 @@ function renderPlayers(){
     div.className = 'player' + (p.alive ? '' : ' dead');
     const nameInput = document.createElement('input');
     nameInput.value = p.name;
+    nameInput.disabled = state.gameStarted;
     nameInput.onchange = () => { p.name = nameInput.value; renderVoteButtons(); saveState(); };
     const alive = document.createElement('input');
     alive.type = 'checkbox';
     alive.checked = p.alive;
     alive.onchange = () => { p.alive = alive.checked; renderPlayers(); renderVoteButtons(); saveState(); };
-    const roleInput = document.createElement('input');
-    roleInput.placeholder = '职业';
-    roleInput.value = p.role || '';
-    roleInput.onchange = () => { p.role = roleInput.value; saveState(); };
-    div.append(p.id + ': ', nameInput, ' 存活 ', alive, ' 职业 ', roleInput);
+    const roleSelect = document.createElement('select');
+    const emptyOpt = document.createElement('option');
+    emptyOpt.value = '';
+    emptyOpt.textContent = '';
+    roleSelect.appendChild(emptyOpt);
+    Object.entries(roleNames).forEach(([key, name]) => {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = name;
+      roleSelect.appendChild(opt);
+    });
+    roleSelect.value = p.role || '';
+    roleSelect.disabled = state.gameStarted;
+    roleSelect.dataset.prevRole = p.role || '';
+    roleSelect.onchange = () => {
+      const newRole = roleSelect.value;
+      const counts = {};
+      state.players.forEach(pl=>{
+        const r = pl.id===p.id ? newRole : pl.role;
+        if(r){ counts[r] = (counts[r]||0)+1; }
+      });
+      if(newRole && counts[newRole] > (state.roleCounts[newRole]||0)){
+        alert('该职业数量已达上限');
+        roleSelect.value = roleSelect.dataset.prevRole;
+        return;
+      }
+      p.role = newRole;
+      roleSelect.dataset.prevRole = newRole;
+      saveState();
+    };
+    div.append(p.id + ': ', nameInput, ' 存活 ', alive, ' 职业 ', roleSelect);
     container.appendChild(div);
   });
 }
 
 function generatePlayers(){
   const n = parseInt(document.getElementById('player-count').value, 10);
+  const totalRoles = Array.from(document.querySelectorAll('#roles input')).reduce((s,i)=>s+parseInt(i.value,10),0);
+  if(totalRoles > n){
+    alert('职业数量总数不能超过玩家人数');
+    return;
+  }
   state.players = [];
   for(let i=1;i<=n;i++){
     state.players.push({id:'P'+i, name:'玩家'+i, alive:true, role:''});
@@ -182,6 +226,23 @@ function prevStep(){
   renderPhase();
   log('返回 '+state.phases[state.currentPhaseIndex].name+' - '+state.phases[state.currentPhaseIndex].steps[state.currentStepIndex]);
   saveState();
+}
+
+function startGame(){
+  if(state.gameStarted) return;
+  state.gameStarted = true;
+  disableInputs();
+  log('开始游戏');
+  saveState();
+}
+
+function disableInputs(){
+  document.getElementById('player-count').disabled = true;
+  document.getElementById('generate-players').disabled = true;
+  document.getElementById('start-game').disabled = true;
+  document.querySelectorAll('#roles input').forEach(i=>i.disabled=true);
+  document.querySelectorAll('#players input[type="text"]').forEach(i=>i.disabled=true);
+  document.querySelectorAll('#players select').forEach(i=>i.disabled=true);
 }
 
 function renderVoteButtons(){
@@ -256,15 +317,25 @@ function voteResult(){
     }
   }
   log('投票结算: '+(result.length?result.join(','):'无人')+' 最高票');
-  state.voteHistory.push({
-    phaseKey: state.phases[state.currentPhaseIndex].key,
+  const phaseKey = state.phases[state.currentPhaseIndex].key;
+  const roles = state.players.reduce((m,p)=>{m[p.id]=p.role;return m;},{});
+  const existing = state.voteHistory.find(r=>r.phaseKey===phaseKey && r.round===state.round);
+  const record = {
+    phaseKey,
     round: state.round,
     votes: {...state.votes},
     result: result,
-    time: new Date().toISOString()
-  });
+    time: new Date().toISOString(),
+    roles
+  };
+  if(existing){
+    Object.assign(existing, record);
+  } else {
+    state.voteHistory.push(record);
+  }
   renderVoteHistory();
   voteReset();
+  document.getElementById('vote-status').textContent = '结果: '+(result.length?result.join(','):'无');
   saveState();
 }
 
@@ -273,8 +344,18 @@ function renderVoteHistory(){
   ul.innerHTML='';
   state.voteHistory.forEach(r=>{
     const li = document.createElement('li');
-    const mappings = Object.entries(r.votes).map(([v,t])=>v+'->'+t).join(' ');
-    li.textContent = `第${r.round}天${r.phaseKey==='day'?'白天':'夜晚'}: ${r.result.join(',')||'无'} (${mappings})`;
+    const roles = r.roles || {};
+    const mappings = Object.entries(r.votes).map(([v,t])=>{
+      const vRole = roles[v] ? `(${roleNames[roles[v]]||roles[v]})` : '';
+      if(t==='abstain') return `${v}${vRole}->弃票`;
+      const tRole = roles[t] ? `(${roleNames[roles[t]]||roles[t]})` : '';
+      return `${v}${vRole}->${t}${tRole}`;
+    }).join(' ');
+    const resultText = r.result.map(id=>{
+      const role = roles[id];
+      return id + (role ? `(${roleNames[role]||role})` : '');
+    }).join(',');
+    li.textContent = `第${r.round}天${r.phaseKey==='day'?'白天':'夜晚'}: ${resultText||'无'} (${mappings})`;
 
     ul.appendChild(li);
   });
@@ -352,6 +433,7 @@ function importJSON(file){
 }
 
 document.getElementById('generate-players').onclick = generatePlayers;
+document.getElementById('start-game').onclick = startGame;
 document.getElementById('prev-step').onclick = prevStep;
 document.getElementById('next-step').onclick = nextStep;
 document.getElementById('vote-abstain').onclick = voteAbstain;
@@ -366,12 +448,40 @@ document.getElementById('import-file').addEventListener('change',e=>{
   if(e.target.files[0]) importJSON(e.target.files[0]);
 });
 
-document.querySelectorAll('#roles input').forEach(input=>{
-  input.addEventListener('change', ()=>{
-    const role = input.getAttribute('data-role');
-    state.roleCounts[role]=parseInt(input.value,10);
-    saveState();
+  document.querySelectorAll('#roles input').forEach(input=>{
+    input.dataset.prev = input.value;
+    input.addEventListener('change', ()=>{
+      const role = input.getAttribute('data-role');
+      const total = Array.from(document.querySelectorAll('#roles input')).reduce((s,i)=>s+parseInt(i.value,10),0);
+      const playerCount = parseInt(document.getElementById('player-count').value,10);
+      if(total > playerCount){
+        alert('职业数量总数不能超过玩家人数');
+        input.value = input.dataset.prev;
+        return;
+      }
+      const newCount = parseInt(input.value,10);
+      const assigned = state.players.filter(p=>p.role===role).length;
+      if(assigned > newCount){
+        alert('已有玩家数量超过该职业上限');
+        input.value = input.dataset.prev;
+        return;
+      }
+      input.dataset.prev = input.value;
+      state.roleCounts[role]=newCount;
+      saveState();
+    });
   });
+
+const playerCountInput = document.getElementById('player-count');
+playerCountInput.dataset.prev = playerCountInput.value;
+playerCountInput.addEventListener('change',()=>{
+  const total = Array.from(document.querySelectorAll('#roles input')).reduce((s,i)=>s+parseInt(i.value,10),0);
+  if(total > parseInt(playerCountInput.value,10)){
+    alert('玩家数不能小于职业总数');
+    playerCountInput.value = playerCountInput.dataset.prev;
+    return;
+  }
+  playerCountInput.dataset.prev = playerCountInput.value;
 });
 
 loadState();
@@ -390,6 +500,16 @@ if(state.players.length){
 } else {
   generatePlayers();
   renderPhase();
+}
+document.querySelectorAll('#roles input').forEach(input=>{
+  const role = input.getAttribute('data-role');
+  const val = state.roleCounts[role]!=null ? state.roleCounts[role] : parseInt(input.value,10);
+  input.value = val;
+  input.dataset.prev = input.value;
+  state.roleCounts[role] = val;
+});
+if(state.gameStarted){
+  disableInputs();
 }
 </script>
 
