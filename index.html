@@ -31,6 +31,7 @@
     <label>守卫<input type="number" data-role="guard" min="0" value="1"></label>
     <label>白痴<input type="number" data-role="idiot" min="0" value="1"></label>
   </div>
+  <button id="start-game">开始游戏</button>
 </section>
 
 <section id="phase">
@@ -144,7 +145,23 @@ function renderPlayers(){
     });
     roleSelect.value = p.role || '';
     roleSelect.disabled = state.gameStarted;
-    roleSelect.onchange = () => { p.role = roleSelect.value; saveState(); };
+    roleSelect.dataset.prevRole = p.role || '';
+    roleSelect.onchange = () => {
+      const newRole = roleSelect.value;
+      const counts = {};
+      state.players.forEach(pl=>{
+        const r = pl.id===p.id ? newRole : pl.role;
+        if(r){ counts[r] = (counts[r]||0)+1; }
+      });
+      if(newRole && counts[newRole] > (state.roleCounts[newRole]||0)){
+        alert('该职业数量已达上限');
+        roleSelect.value = roleSelect.dataset.prevRole;
+        return;
+      }
+      p.role = newRole;
+      roleSelect.dataset.prevRole = newRole;
+      saveState();
+    };
     div.append(p.id + ': ', nameInput, ' 存活 ', alive, ' 职业 ', roleSelect);
     container.appendChild(div);
   });
@@ -216,9 +233,18 @@ function prevStep(){
   saveState();
 }
 
+function startGame(){
+  if(state.gameStarted) return;
+  state.gameStarted = true;
+  disableInputs();
+  log('开始游戏');
+  saveState();
+}
+
 function disableInputs(){
   document.getElementById('player-count').disabled = true;
   document.getElementById('generate-players').disabled = true;
+  document.getElementById('start-game').disabled = true;
   document.querySelectorAll('#roles input').forEach(i=>i.disabled=true);
   document.querySelectorAll('#players input[type="text"]').forEach(i=>i.disabled=true);
   document.querySelectorAll('#players select').forEach(i=>i.disabled=true);
@@ -314,6 +340,7 @@ function voteResult(){
   }
   renderVoteHistory();
   voteReset();
+  document.getElementById('vote-status').textContent = '结果: '+(result.length?result.join(','):'无');
   saveState();
 }
 
@@ -322,14 +349,15 @@ function renderVoteHistory(){
   ul.innerHTML='';
   state.voteHistory.forEach(r=>{
     const li = document.createElement('li');
+    const roles = r.roles || {};
     const mappings = Object.entries(r.votes).map(([v,t])=>{
-      const vRole = r.roles[v] ? `(${roleNames[r.roles[v]]||r.roles[v]})` : '';
+      const vRole = roles[v] ? `(${roleNames[roles[v]]||roles[v]})` : '';
       if(t==='abstain') return `${v}${vRole}->弃票`;
-      const tRole = r.roles[t] ? `(${roleNames[r.roles[t]]||r.roles[t]})` : '';
+      const tRole = roles[t] ? `(${roleNames[roles[t]]||roles[t]})` : '';
       return `${v}${vRole}->${t}${tRole}`;
     }).join(' ');
     const resultText = r.result.map(id=>{
-      const role = r.roles[id];
+      const role = roles[id];
       return id + (role ? `(${roleNames[role]||role})` : '');
     }).join(',');
     li.textContent = `第${r.round}天${r.phaseKey==='day'?'白天':'夜晚'}: ${resultText||'无'} (${mappings})`;
@@ -410,6 +438,7 @@ function importJSON(file){
 }
 
 document.getElementById('generate-players').onclick = generatePlayers;
+document.getElementById('start-game').onclick = startGame;
 document.getElementById('prev-step').onclick = prevStep;
 document.getElementById('next-step').onclick = nextStep;
 document.getElementById('vote-abstain').onclick = voteAbstain;
@@ -424,21 +453,40 @@ document.getElementById('import-file').addEventListener('change',e=>{
   if(e.target.files[0]) importJSON(e.target.files[0]);
 });
 
-document.querySelectorAll('#roles input').forEach(input=>{
-  input.dataset.prev = input.value;
-  input.addEventListener('change', ()=>{
-    const role = input.getAttribute('data-role');
-    const total = Array.from(document.querySelectorAll('#roles input')).reduce((s,i)=>s+parseInt(i.value,10),0);
-    const playerCount = parseInt(document.getElementById('player-count').value,10);
-    if(total > playerCount){
-      alert('职业数量总数不能超过玩家人数');
-      input.value = input.dataset.prev;
-      return;
-    }
+  document.querySelectorAll('#roles input').forEach(input=>{
     input.dataset.prev = input.value;
-    state.roleCounts[role]=parseInt(input.value,10);
-    saveState();
+    input.addEventListener('change', ()=>{
+      const role = input.getAttribute('data-role');
+      const total = Array.from(document.querySelectorAll('#roles input')).reduce((s,i)=>s+parseInt(i.value,10),0);
+      const playerCount = parseInt(document.getElementById('player-count').value,10);
+      if(total > playerCount){
+        alert('职业数量总数不能超过玩家人数');
+        input.value = input.dataset.prev;
+        return;
+      }
+      const newCount = parseInt(input.value,10);
+      const assigned = state.players.filter(p=>p.role===role).length;
+      if(assigned > newCount){
+        alert('已有玩家数量超过该职业上限');
+        input.value = input.dataset.prev;
+        return;
+      }
+      input.dataset.prev = input.value;
+      state.roleCounts[role]=newCount;
+      saveState();
+    });
   });
+
+const playerCountInput = document.getElementById('player-count');
+playerCountInput.dataset.prev = playerCountInput.value;
+playerCountInput.addEventListener('change',()=>{
+  const total = Array.from(document.querySelectorAll('#roles input')).reduce((s,i)=>s+parseInt(i.value,10),0);
+  if(total > parseInt(playerCountInput.value,10)){
+    alert('玩家数不能小于职业总数');
+    playerCountInput.value = playerCountInput.dataset.prev;
+    return;
+  }
+  playerCountInput.dataset.prev = playerCountInput.value;
 });
 
 const playerCountInput = document.getElementById('player-count');
@@ -472,10 +520,10 @@ if(state.players.length){
 }
 document.querySelectorAll('#roles input').forEach(input=>{
   const role = input.getAttribute('data-role');
-  if(state.roleCounts[role]!=null){
-    input.value = state.roleCounts[role];
-    input.dataset.prev = input.value;
-  }
+  const val = state.roleCounts[role]!=null ? state.roleCounts[role] : parseInt(input.value,10);
+  input.value = val;
+  input.dataset.prev = input.value;
+  state.roleCounts[role] = val;
 });
 if(state.gameStarted){
   disableInputs();
