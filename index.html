@@ -1,11 +1,366 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>狼人杀法官面板</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 1rem; }
+  section { margin-bottom: 2rem; }
+  .player { margin: 0.25rem 0; }
+  .dead { text-decoration: line-through; opacity: 0.5; }
+  #vote-buttons button { margin: 0.25rem; }
+  #log-list { max-height: 150px; overflow-y: auto; border: 1px solid #ccc; padding:0.5rem; }
+</style>
 </head>
 <body>
-    This is the index page
+<h1>狼人杀法官面板</h1>
+
+<section id="settings">
+  <h2>基础设置</h2>
+  <label>玩家数量 <input type="number" id="player-count" min="1" value="8"></label>
+  <button id="generate-players">生成玩家</button>
+  <div id="players"></div>
+  <h3>职业数量</h3>
+  <div id="roles">
+    <label>狼人<input type="number" data-role="wolf" min="0" value="4"></label>
+    <label>村民<input type="number" data-role="villager" min="0" value="4"></label>
+    <label>预言家<input type="number" data-role="seer" min="0" value="1"></label>
+    <label>女巫<input type="number" data-role="witch" min="0" value="1"></label>
+    <label>猎人<input type="number" data-role="hunter" min="0" value="1"></label>
+    <label>守卫<input type="number" data-role="guard" min="0" value="1"></label>
+    <label>白痴<input type="number" data-role="idiot" min="0" value="1"></label>
+  </div>
+</section>
+
+<section id="phase">
+  <h2>阶段</h2>
+  <div>回合: <span id="round-number"></span></div>
+  <div>阶段: <span id="phase-name"></span> - <span id="step-name"></span></div>
+  <button id="prev-step">上一步</button>
+  <button id="next-step">下一步</button>
+</section>
+
+<section id="vote">
+  <h2>投票</h2>
+  <div id="vote-buttons"></div>
+  <button id="vote-abstain">弃票</button>
+  <button id="vote-result">结算投票</button>
+  <button id="vote-reset">重置投票</button>
+  <div>当前投票: <span id="vote-status"></span></div>
+  <h3>历史</h3>
+  <ul id="vote-history"></ul>
+</section>
+
+<section id="timer">
+  <h2>计时器</h2>
+  <input type="number" id="timer-seconds" value="120">
+  <button id="timer-start">开始</button>
+  <button id="timer-pause">暂停</button>
+  <button id="timer-reset">重置</button>
+  <div id="timer-display">120</div>
+</section>
+
+<section id="logs">
+  <h2>日志</h2>
+  <ul id="log-list"></ul>
+</section>
+
+<section id="storage">
+  <h2>保存</h2>
+  <button id="export-json">导出JSON</button>
+  <input type="file" id="import-file" style="display:none">
+  <button id="import-json">导入JSON</button>
+</section>
+
+<script>
+const state = {
+  players: [],
+  roleCounts: {},
+  phases: [
+    { key: 'night', name: '夜晚', steps: ['狼人行动','预言家验人','女巫用药','守卫守人']},
+    { key: 'day', name: '白天', steps: ['遗言/公投发言','讨论','投票处决']}
+  ],
+  currentPhaseIndex: 0,
+  currentStepIndex: 0,
+  round: 1,
+  votes: {},
+  abstain: 0,
+  voteHistory: [],
+  timer: { seconds: 120, remaining: 120, running: false, id: null },
+  logs: []
+};
+
+function saveState(){
+  localStorage.setItem('werewolfState', JSON.stringify(state));
+}
+
+function loadState(){
+  const data = localStorage.getItem('werewolfState');
+  if(data){
+    const s = JSON.parse(data);
+    Object.assign(state, s);
+  }
+}
+
+function renderPlayers(){
+  const container = document.getElementById('players');
+  container.innerHTML = '';
+  state.players.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'player' + (p.alive ? '' : ' dead');
+    const nameInput = document.createElement('input');
+    nameInput.value = p.name;
+    nameInput.onchange = () => { p.name = nameInput.value; renderVoteButtons(); saveState(); };
+    const alive = document.createElement('input');
+    alive.type = 'checkbox';
+    alive.checked = p.alive;
+    alive.onchange = () => { p.alive = alive.checked; renderPlayers(); renderVoteButtons(); saveState(); };
+    div.append(p.id + ': ', nameInput, ' 存活 ', alive);
+    container.appendChild(div);
+  });
+}
+
+function generatePlayers(){
+  const n = parseInt(document.getElementById('player-count').value, 10);
+  state.players = [];
+  for(let i=1;i<=n;i++){
+    state.players.push({id:'P'+i, name:'玩家'+i, alive:true, role:''});
+  }
+  renderPlayers();
+  renderVoteButtons();
+  log('生成 '+n+' 名玩家');
+  saveState();
+}
+
+function renderPhase(){
+  document.getElementById('round-number').textContent = state.round;
+  const phase = state.phases[state.currentPhaseIndex];
+  document.getElementById('phase-name').textContent = phase.name;
+  document.getElementById('step-name').textContent = phase.steps[state.currentStepIndex];
+}
+
+function nextStep(){
+  const phase = state.phases[state.currentPhaseIndex];
+  if(state.currentStepIndex < phase.steps.length -1){
+    state.currentStepIndex++;
+  } else {
+    if(state.currentPhaseIndex < state.phases.length -1){
+      state.currentPhaseIndex++;
+      state.currentStepIndex = 0;
+    } else {
+      state.round++;
+      state.currentPhaseIndex = 0;
+      state.currentStepIndex = 0;
+    }
+  }
+  renderPhase();
+  log('进入 '+state.phases[state.currentPhaseIndex].name+' - '+state.phases[state.currentPhaseIndex].steps[state.currentStepIndex]);
+  saveState();
+}
+
+function prevStep(){
+  if(state.currentStepIndex >0){
+    state.currentStepIndex--;
+  } else {
+    if(state.currentPhaseIndex >0){
+      state.currentPhaseIndex--;
+      state.currentStepIndex = state.phases[state.currentPhaseIndex].steps.length -1;
+    } else if(state.round>1){
+      state.round--;
+      state.currentPhaseIndex = state.phases.length -1;
+      state.currentStepIndex = state.phases[state.currentPhaseIndex].steps.length -1;
+    }
+  }
+  renderPhase();
+  log('返回 '+state.phases[state.currentPhaseIndex].name+' - '+state.phases[state.currentPhaseIndex].steps[state.currentStepIndex]);
+  saveState();
+}
+
+function renderVoteButtons(){
+  const container = document.getElementById('vote-buttons');
+  container.innerHTML = '';
+  state.players.forEach(p => {
+    if(p.alive){
+      const btn = document.createElement('button');
+      btn.textContent = p.id;
+      btn.onclick = () => { state.votes[p.id] = (state.votes[p.id]||0)+1; updateVoteStatus(); saveState(); };
+      container.appendChild(btn);
+    }
+  });
+  updateVoteStatus();
+}
+
+function updateVoteStatus(){
+  const lines = [];
+  for(const id in state.votes){
+    lines.push(id+':'+state.votes[id]);
+  }
+  lines.push('弃票:'+state.abstain);
+  document.getElementById('vote-status').textContent = lines.join(' ');
+}
+
+function voteAbstain(){
+  state.abstain++;
+  updateVoteStatus();
+  saveState();
+}
+
+function voteReset(){
+  state.votes = {};
+  state.abstain = 0;
+  updateVoteStatus();
+  log('重置投票');
+  saveState();
+}
+
+function voteResult(){
+  let max = 0;
+  const result = [];
+  for(const id in state.votes){
+    const v = state.votes[id];
+    if(v>max){
+      max=v; result.length=0; result.push(id);
+    } else if(v===max){
+      result.push(id);
+    }
+  }
+  log('投票结算: '+(result.length?result.join(','):'无人')+' 最高票');
+  state.voteHistory.push({
+    phaseKey: state.phases[state.currentPhaseIndex].key,
+    round: state.round,
+    votes: {...state.votes},
+    abstain: state.abstain,
+    result: result,
+    time: new Date().toISOString()
+  });
+  renderVoteHistory();
+  voteReset();
+  saveState();
+}
+
+function renderVoteHistory(){
+  const ul = document.getElementById('vote-history');
+  ul.innerHTML='';
+  state.voteHistory.forEach(r=>{
+    const li = document.createElement('li');
+    li.textContent = `第${r.round}天${r.phaseKey==='day'?'白天':'夜晚'}: ${r.result.join(',')||'无'} (${JSON.stringify(r.votes)})`;
+    ul.appendChild(li);
+  });
+}
+
+function log(text){
+  const entry = {time: new Date().toLocaleTimeString(), text};
+  state.logs.push(entry);
+  const li = document.createElement('li');
+  li.textContent = `${entry.time} ${entry.text}`;
+  document.getElementById('log-list').appendChild(li);
+  saveState();
+}
+
+function startTimer(){
+  if(state.timer.running) return;
+  state.timer.running = true;
+  state.timer.seconds = parseInt(document.getElementById('timer-seconds').value,10);
+  state.timer.remaining = state.timer.seconds;
+  document.getElementById('timer-display').textContent = state.timer.remaining;
+  state.timer.id = setInterval(()=>{
+    if(state.timer.remaining>0){
+      state.timer.remaining--;
+      document.getElementById('timer-display').textContent = state.timer.remaining;
+    } else {
+      pauseTimer();
+    }
+  },1000);
+}
+
+function pauseTimer(){
+  state.timer.running = false;
+  clearInterval(state.timer.id);
+  saveState();
+}
+
+function resetTimer(){
+  pauseTimer();
+  state.timer.remaining = state.timer.seconds;
+  document.getElementById('timer-display').textContent = state.timer.remaining;
+  saveState();
+}
+
+function exportJSON(){
+  const data = JSON.stringify(state);
+  const blob = new Blob([data], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'werewolf_state.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importJSON(file){
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const obj = JSON.parse(e.target.result);
+    Object.assign(state, obj);
+    renderPlayers();
+    renderPhase();
+    renderVoteButtons();
+    renderVoteHistory();
+    document.getElementById('timer-seconds').value = state.timer.seconds;
+    document.getElementById('timer-display').textContent = state.timer.remaining;
+    document.getElementById('log-list').innerHTML='';
+    state.logs.forEach(l=>{
+      const li=document.createElement('li');
+      li.textContent=`${l.time} ${l.text}`;
+      document.getElementById('log-list').appendChild(li);
+    });
+    saveState();
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById('generate-players').onclick = generatePlayers;
+document.getElementById('prev-step').onclick = prevStep;
+document.getElementById('next-step').onclick = nextStep;
+document.getElementById('vote-abstain').onclick = voteAbstain;
+document.getElementById('vote-reset').onclick = voteReset;
+document.getElementById('vote-result').onclick = voteResult;
+document.getElementById('timer-start').onclick = startTimer;
+document.getElementById('timer-pause').onclick = pauseTimer;
+document.getElementById('timer-reset').onclick = resetTimer;
+document.getElementById('export-json').onclick = exportJSON;
+document.getElementById('import-json').onclick = ()=>document.getElementById('import-file').click();
+document.getElementById('import-file').addEventListener('change',e=>{
+  if(e.target.files[0]) importJSON(e.target.files[0]);
+});
+
+document.querySelectorAll('#roles input').forEach(input=>{
+  input.addEventListener('change', ()=>{
+    const role = input.getAttribute('data-role');
+    state.roleCounts[role]=parseInt(input.value,10);
+    saveState();
+  });
+});
+
+loadState();
+if(state.players.length){
+  renderPlayers();
+  renderVoteButtons();
+  renderVoteHistory();
+  renderPhase();
+  document.getElementById('timer-seconds').value=state.timer.seconds;
+  document.getElementById('timer-display').textContent=state.timer.remaining;
+  state.logs.forEach(l=>{
+    const li=document.createElement('li');
+    li.textContent=`${l.time} ${l.text}`;
+    document.getElementById('log-list').appendChild(li);
+  });
+} else {
+  generatePlayers();
+  renderPhase();
+}
+</script>
+
 </body>
 </html>
